@@ -1,1 +1,1 @@
-# We Build Autonomous Robots# CS274A
+# We Build Autonomous Robots
