@@ -2,59 +2,60 @@
 
 import rclpy
 from rclpy.node import Node
-
-# import the message type to use
-from std_msgs.msg import Int64, Bool, String
+from std_msgs.msg import Bool
 from geometry_msgs.msg import Twist
 
 
-class ConstantControl(Node):
+class ConstantVelocityController(Node):
+    """
+    A simple ROS 2 node that publishes a constant forward velocity
+    until stopped via a /kill or /motor topic.
+    """
+
     def __init__(self) -> None:
-# initialize base class (must happen before everything else)
-        super().__init__("constant_control")
+        super().__init__("constant_velocity_controller")
 
-        self.msg = "sending constant control..."
-        # create publisher with: self.create_publisher(<msg type>, <topic>, <qos>)
-        # self.hb_pub = self.create_publisher(String, "/constant_control", 10)
-        self.hb_pub2 = self.create_publisher(Twist, '/cmd_vel', 10)
-            
-        # create a timer with: self.create_timer(<second>, <callback>)
-        self.hb_timer = self.create_timer(1, self.hb_callback)
+        # Publisher for velocity commands
+        self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
 
-        # create subscription with: self.create_subscription(<msg type>, <topic>, <callback>, <qos>)
-        self.motor_sub = self.create_subscription(Bool, "/constant_control/motor", self.health_callback, 10)
-        self.motor_sub2 = self.create_subscription(Bool, "/kill", self.kill_callback, 10)
+        # Publish velocity every 1 second
+        self.timer = self.create_timer(1.0, self.publish_constant_velocity)
+
+        # Subscribers for stop signals
+        self.create_subscription(Bool, "/kill", self.kill_callback, 10)
+        self.create_subscription(Bool, "/constant_control/motor", self.motor_callback, 10)
+
+        self.get_logger().info("ConstantVelocityController started. Publishing constant velocity...")
+
+    def publish_constant_velocity(self) -> None:
+        """Publish a constant forward velocity command."""
+        msg = Twist()
+        msg.linear.x = 1.0  # move forward at 1 m/s
+        msg.angular.z = 0.0
+        self.cmd_vel_pub.publish(msg)
+        self.get_logger().debug("Published forward velocity: linear.x = 1.0")
 
     def kill_callback(self, msg: Bool) -> None:
+        """Stop all motion when /kill topic publishes True."""
         if msg.data:
-            self.hb_timer.cancel()
-            msg_control = Twist()
-            msg_control.linear.x = 0.0
-            msg_control.angular.z = 0.0
-            self.hb_pub2.publish(msg_control)
+            self.timer.cancel()
+            stop_msg = Twist()  # all zeros by default
+            self.cmd_vel_pub.publish(stop_msg)
+            self.get_logger().warn("Kill signal received. Robot stopped.")
 
-    def hb_callback(self) -> None:
-        """
-        Heartbeat callback triggered by the timer
-        """
-        # construct heartbeat message
-        msg = Twist()
-        msg.linear.x = 1.0
-
-        # publish heartbeat counter
-        self.hb_pub2.publish(msg)
-
-    def health_callback(self, msg: Bool) -> None:
-        """
-        Sensor health callback triggered by subscription
-        """
+    def motor_callback(self, msg: Bool) -> None:
+        """Stop publishing if motor health fails."""
         if not msg.data:
-            self.get_logger().fatal("Heartbeat stopped")
-            self.hb_timer.cancel()
+            self.timer.cancel()
+            self.get_logger().fatal("Motor health failure detected. Velocity publishing stopped.")
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ConstantVelocityController()
+    rclpy.spin(node)
+    rclpy.shutdown()
 
 
 if __name__ == "__main__":
-    rclpy.init()        # initialize ROS2 context (must run before any other rclpy call)
-    node = ConstantControl()  # instantiate the heartbeat node
-    rclpy.spin(node)    # Use ROS2 built-in schedular for executing the node
-    rclpy.shutdown()    # cleanly shutdown ROS2 context
+    main()
